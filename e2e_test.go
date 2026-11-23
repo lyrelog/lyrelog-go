@@ -18,7 +18,7 @@ func TestEndToEnd(t *testing.T) {
 	if endpoint == "" || key == "" {
 		t.Skip("set LYRELOG_E2E_URL and LYRELOG_E2E_KEY to run against a Lyrelog server")
 	}
-	client, err := New(Config{Endpoint: endpoint, APIKey: key, Environment: "development", Release: "0.9.0-e2e", FlushInterval: time.Hour})
+	client, err := New(Config{Endpoint: endpoint, APIKey: key, Environment: "development", Release: "1.0.0-e2e", FlushInterval: time.Hour})
 	if err != nil {
 		t.Fatal(err)
 	}

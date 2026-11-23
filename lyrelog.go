@@ -32,8 +32,8 @@ import (
 	"time"
 )
 
-// Version is this SDK's version, sent as resource.sdk ("lyrelog-go/0.9.0").
-const Version = "0.9.0"
+// Version is this SDK's version, sent as resource.sdk ("lyrelog-go/1.0.0").
+const Version = "1.0.0"
 
 const sdkName = "lyrelog-go/" + Version
 

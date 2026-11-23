@@ -36,7 +36,7 @@ func TestResourceDefaults(t *testing.T) {
 	}
 	defer client.Close()
 	r := client.resource
-	if r.Environment != "staging" || r.Platform != "go" || r.SDK != "lyrelog-go/0.9.0" || r.OSName == "" {
+	if r.Environment != "staging" || r.Platform != "go" || r.SDK != "lyrelog-go/1.0.0" || r.OSName == "" {
 		t.Fatalf("%+v", r)
 	}
 	if client.endpoint != "https://x/v1/events:batch" {
@@ -134,7 +134,7 @@ func TestBatchesBy500EventsAndGzip(t *testing.T) {
 		sizes = append(sizes, len(b.lines))
 		h := b.header
 		if h.Get("Content-Encoding") != "gzip" || h.Get("Content-Type") != "application/x-ndjson" ||
-			h.Get("Authorization") != "Bearer lyr_ing_test" || h.Get("User-Agent") != "lyrelog-go/0.9.0" {
+			h.Get("Authorization") != "Bearer lyr_ing_test" || h.Get("User-Agent") != "lyrelog-go/1.0.0" {
 			t.Fatalf("headers %v", h)
 		}
 	}

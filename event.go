@@ -11,6 +11,7 @@ import (
 	"math"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -120,7 +121,15 @@ func marshal(value any) ([]byte, error) {
 // neither a cut nor the summary's preview can show a secret. An encoding over maxPayloadBytes
 // is never decoded, walked and re-encoded whole (that costs many times its size): it is
 // redacted as a stream of tokens, which stops once the output passes the limit (oversized).
+//
+// A payload whose encoding would pass maxPayloadBytes is not even encoded whole: boundedEncode
+// stops there, and the summary's bytes is then a lower bound, said by "at_least": true (as in
+// the JavaScript SDK).
 func preparePayload(value any, redact []string) json.RawMessage {
+	if head, over, _ := boundedEncode(value, maxPayloadBytes, redact); over {
+		summary, _ := marshal(map[string]any{"lyrelog_truncated": true, "bytes": len(head), "at_least": true, "preview": preview(head)})
+		return summary
+	}
 	data, err := safeMarshal(value)
 	if err == nil && len(data) > maxPayloadBytes {
 		return oversized(data, redact)
@@ -170,8 +179,19 @@ func redactStream(data []byte, redact []string, limit int) (out []byte, complete
 	var buffer bytes.Buffer
 	var stack []container
 	write := func(token any) {
-		encoded, _ := marshal(token)
-		buffer.Write(encoded)
+		switch token := token.(type) {
+		case string:
+			buffer.Write(appendJSONString(nil, token))
+		case json.Number:
+			buffer.WriteString(string(token))
+		case bool:
+			buffer.WriteString(strconv.FormatBool(token))
+		case nil:
+			buffer.WriteString("null")
+		default:
+			encoded, _ := marshal(token)
+			buffer.Write(encoded)
+		}
 	}
 	for buffer.Len() <= limit {
 		token, err := decoder.Token()

@@ -9,9 +9,11 @@ import (
 	"io/fs"
 	"log"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -19,8 +21,8 @@ import (
 
 // What was decided before 0.9.0 (lyrelog: docs/sdk-spec.md).
 
-func TestVersionIs090Everywhere(t *testing.T) {
-	if Version != "0.9.0" || sdkName != "lyrelog-go/0.9.0" {
+func TestVersionIs100Everywhere(t *testing.T) {
+	if Version != "1.0.0" || sdkName != "lyrelog-go/1.0.0" {
 		t.Fatalf("Version %q, sdk %q", Version, sdkName)
 	}
 	readme, err := os.ReadFile("README.md")
@@ -179,42 +181,143 @@ func (h countingHandler) Handle(ctx context.Context, r slog.Record) error {
 	return h.Handler.Handle(ctx, r)
 }
 
-// An oversized payload is summarised from its encoding: it is not decoded into maps and slices
-// and re-encoded first (that costs many times its size), and the preview still hides secrets.
-func TestAnOversizedPayloadIsSummarisedWithoutDecodingIt(t *testing.T) {
-	payload := map[string]any{"access_token": "sekretvalue", "items": make([]int, 2_000_000)}
-	allocated := func(f func()) uint64 {
+// A huge payload is never encoded whole only to be summarised: encoding stops once it passes
+// the payload limit, whatever holds the bulk (a slice in a map, a struct's field, a string, a
+// json.RawMessage), and the preview still hides secrets.
+func TestAHugePayloadIsNeverEncodedWhole(t *testing.T) {
+	type item struct {
+		ID   int    `json:"id"`
+		Name string `json:"name,omitempty"`
+	}
+	type response struct {
+		Token string `json:"access_token"`
+		Items []item `json:"items"`
+	}
+	raw := json.RawMessage(`{"access_token":"sekretvalue","items":[` + strings.Repeat(`0,`, 4_000_000) + `0]}`)
+	cases := map[string]struct {
+		payload any
+		prefix  string
+	}{
+		"map":    {map[string]any{"access_token": "sekretvalue", "items": make([]int, 4_000_000)}, `{"access_token":"[redacted]","items":[0,0,`},
+		"struct": {&response{Token: "sekretvalue", Items: make([]item, 1_000_000)}, `{"access_token":"[redacted]","items":[{"id":0},{"id":0},`},
+		"string": {map[string]any{"access_token": "sekretvalue", "body": strings.Repeat("x", 16<<20)}, `{"access_token":"[redacted]","body":"xxx`},
+		"raw":    {raw, `{"access_token":"[redacted]","items":[0,0,`},
+	}
+	for name, c := range cases {
 		var before, after runtime.MemStats
 		runtime.GC()
 		runtime.ReadMemStats(&before)
-		f()
+		got := preparePayload(c.payload, defaultRedactSet)
 		runtime.ReadMemStats(&after)
-		return after.TotalAlloc - before.TotalAlloc
+		if used := after.TotalAlloc - before.TotalAlloc; used > 4<<20 { // about 1 MiB (more under -race); encoded whole, 50 MiB and up
+			t.Errorf("%s: summarising a payload of several MiB allocated %d KiB", name, used>>10)
+		}
+		var summary struct {
+			Truncated bool   `json:"lyrelog_truncated"`
+			Bytes     int    `json:"bytes"`
+			AtLeast   bool   `json:"at_least"`
+			Preview   string `json:"preview"`
+		}
+		if err := json.Unmarshal(got, &summary); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if !summary.Truncated || !summary.AtLeast || summary.Bytes <= maxPayloadBytes {
+			t.Errorf("%s: summary bytes %d, at_least %v", name, summary.Bytes, summary.AtLeast)
+		}
+		if strings.Contains(summary.Preview, "sekretvalue") || !strings.HasPrefix(summary.Preview, c.prefix) || len(summary.Preview) > previewBytes {
+			t.Errorf("%s: preview %.80q", name, summary.Preview)
+		}
 	}
-	var encoded, got []byte
-	encoding := allocated(func() { encoded, _ = safeMarshal(payload) })
-	total := allocated(func() { got = preparePayload(payload, defaultRedactSet) })
-	// encoding/json builds the whole encoding in memory before writing it anywhere, so that
-	// part can't be bounded; what comes after it must not grow with the payload.
-	if total > encoding && total-encoding > 16<<20 {
-		t.Errorf("summarising a %d KiB payload allocated %d KiB on top of its encoding", len(encoded)>>10, (total-encoding)>>10)
+}
+
+type encodeKey int
+
+func (k encodeKey) MarshalText() ([]byte, error) { return []byte("k" + strconv.Itoa(int(k))), nil }
+
+type encodeZeroer struct{ N int }
+
+func (z encodeZeroer) IsZero() bool { return z.N < 0 }
+
+type encodePointerMarshaler struct{ A int }
+
+func (p *encodePointerMarshaler) MarshalJSON() ([]byte, error) {
+	return []byte(`{"via":"pointer"}`), nil
+}
+
+// The bounded walk that decides a payload is too big writes what encoding/json writes (then
+// redacted as a stream), byte for byte, so a payload is summarised exactly when it was before.
+func TestTheBoundedEncodingIsEncodingJSONs(t *testing.T) {
+	type inner struct {
+		Password string `json:"password"`
+		Note     string `json:"note,omitempty"`
 	}
-	var summary struct {
-		Truncated bool   `json:"lyrelog_truncated"`
-		Bytes     int    `json:"bytes"`
-		Preview   string `json:"preview"`
+	type outer struct {
+		Name      string            `json:"name"`
+		Skip      string            `json:"-"`
+		Dash      string            `json:"-,"`
+		Empty     []int             `json:"empty,omitempty"`
+		Zero      encodeZeroer      `json:"zero,omitzero"`
+		NotZero   encodeZeroer      `json:"not_zero,omitzero"`
+		When      time.Time         `json:"when"`
+		Raw       json.RawMessage   `json:"raw"`
+		Bytes     []byte            `json:"bytes"`
+		Array     [2]byte           `json:"array"`
+		Inner     inner             `json:"inner"`
+		Ptr       *inner            `json:"ptr"`
+		Any       any               `json:"any"`
+		Keys      map[encodeKey]int `json:"keys"`
+		Ints      map[int]string    `json:"ints"`
+		Number    json.Number       `json:"number"`
+		Floats    []float64         `json:"floats"`
+		F32       float32           `json:"f32"`
+		Marshal   encodePointerMarshaler
+		Bad       string `json:"bad name!"`
+		Unicode   string
+		lowercase int
 	}
-	if err := json.Unmarshal(got, &summary); err != nil {
-		t.Fatal(err)
+	values := []any{
+		nil, true, 12, -3.5, "x<y>&\u2028\u2029\x00\xff é", json.Number("1e3"), []any{nil, 1, "a"},
+		map[string]any{"b": 1, "a": map[string]any{"token": "t", "z": []string{"s"}}, "api_key": 3},
+		outer{Name: "n", Skip: "s", Dash: "d", Zero: encodeZeroer{-1}, NotZero: encodeZeroer{0},
+			When: time.Date(2026, 11, 23, 1, 2, 3, 4, time.UTC), Raw: json.RawMessage(` { "secret" : 1, "a" : [ 1 , 2 ] } `),
+			Bytes: []byte("hello"), Array: [2]byte{1, 2}, Inner: inner{Password: "p"}, Ptr: &inner{Note: "n"},
+			Any: map[string]int{"cookie": 1}, Keys: map[encodeKey]int{2: 2, 10: 10}, Ints: map[int]string{10: "a", 9: "b"},
+			Number: "42", Floats: []float64{1e21, 1e-7, 0.1, 100}, F32: 0.1, Unicode: "日本"},
+		&outer{Marshal: encodePointerMarshaler{1}},
+		[]outer{{Marshal: encodePointerMarshaler{1}}},
 	}
-	if !summary.Truncated || summary.Bytes != len(encoded) {
-		t.Fatalf("summary %+v, want bytes %d", summary, len(encoded))
+	for _, redact := range [][]string{defaultRedactSet, nil} {
+		for _, value := range values {
+			data, err := marshal(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := data
+			if len(redact) > 0 {
+				want, _ = redactStream(data, redact, maxPayloadBytes)
+			}
+			got, over, ok := boundedEncode(value, maxPayloadBytes, redact)
+			if !ok || over || string(got) != string(want) {
+				t.Errorf("redact %v, %#v\n got %s (over %v, ok %v)\nwant %s", len(redact) > 0, value, got, over, ok, want)
+			}
+		}
 	}
-	if strings.Contains(summary.Preview, "sekretvalue") || !strings.HasPrefix(summary.Preview, `{"access_token":"[redacted]","items":[0,0,`) {
-		t.Fatalf("preview %q", summary.Preview)
+	// What the walk can't tell is left to encoding/json, as before.
+	type embedded struct{ inner }
+	for _, value := range []any{embedded{}, make(chan int), math.NaN(), struct {
+		N int `json:"n,string"`
+	}{}} {
+		if _, over, ok := boundedEncode(value, maxPayloadBytes, nil); ok || over {
+			t.Errorf("%#v: ok %v, over %v", value, ok, over)
+		}
 	}
-	if len(summary.Preview) > previewBytes {
-		t.Fatalf("a preview of %d bytes", len(summary.Preview))
+	// Past the limit, it stops with at least limit bytes of the encoding.
+	for _, value := range []any{strings.Repeat("é", 100), make([]int, 100), make([]byte, 100), map[int]int{1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7, 8: 8, 9: 9, 10: 10, 11: 11, 12: 12, 13: 13}} {
+		full, _ := marshal(value)
+		got, over, ok := boundedEncode(value, 50, nil)
+		if !ok || !over || len(got) < 50 || !strings.HasPrefix(string(full), string(got)) {
+			t.Errorf("%T: %s (over %v, ok %v)\nfull %s", value, got, over, ok, full)
+		}
 	}
 }
 

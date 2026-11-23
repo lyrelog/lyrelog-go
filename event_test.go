@@ -58,7 +58,7 @@ func TestEventShape(t *testing.T) {
 		t.Fatalf("not a v4 UUID: %v", got["event_id"])
 	}
 	resource := got["resource"].(map[string]any)
-	if resource["sdk"] != "lyrelog-go/0.9.0" || resource["platform"] != "go" {
+	if resource["sdk"] != "lyrelog-go/1.0.0" || resource["platform"] != "go" {
 		t.Fatalf("resource %v", resource)
 	}
 	if _, ok := got["payload"].(map[string]any); !ok {

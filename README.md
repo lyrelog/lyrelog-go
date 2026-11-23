@@ -19,7 +19,7 @@ service. Standard library only, Go 1.24+.
 ## Install
 
 ```bash
-go get go.lyrelog.com/lyrelog@v0.9.0
+go get go.lyrelog.com/lyrelog@v1.0.0
 ```
 
 The source is at [github.com/lyrelog/lyrelog-go](https://github.com/lyrelog/lyrelog-go); the
@@ -175,7 +175,7 @@ it through `slog.NewLogLogger` over the Lyrelog handler, or through `log.Default
 a `Config` or a `*Client` with `fmt`, or a `Config` as JSON, redacts the API key. `fmt` can't
 call methods on an unexported struct field, so a `Config` printed with `%+v` inside your own
 struct's unexported field still shows the key: keep it out of such fields or print it alone.
-Every event also carries `os_name` (`runtime.GOOS`), `sdk` (`lyrelog-go/0.9.0`), the VCS revision as `app_build` when the binary
+Every event also carries `os_name` (`runtime.GOOS`), `sdk` (`lyrelog-go/1.0.0`), the VCS revision as `app_build` when the binary
 has one, and an install id and session id, both per process.
 
 ## What it does for you
@@ -230,9 +230,9 @@ Applied before an event is queued, so the server never rejects a line for its sh
   still sent and the caller never panics.
 - `payload` up to 64 KiB encoded; a bigger one is replaced by
   `{"lyrelog_truncated": true, "bytes": N, "preview": "<first 1 KiB>"}`, `N` its encoded size,
-  unless it fits once its secrets are redacted. It is redacted as a stream, never decoded
-  whole, so a huge payload costs its encoding and little more. One that can't be encoded
-  becomes `{"encoding_error": "..."}`.
+  unless it fits once its secrets are redacted. Encoding stops once it passes 64 KiB, so a huge
+  payload is never encoded whole: `N` is then what was encoded, with `"at_least": true`. One
+  that can't be encoded becomes `{"encoding_error": "..."}`.
 - An event that still can't fit in a 512 KiB batch is dropped and counted before it is queued.
 
 ## Tests
