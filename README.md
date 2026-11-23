@@ -1,4 +1,17 @@
-# Lyrelog for Go
+<p align="center">
+  <a href="https://lyrelog.com">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://lyrelog.com/readme/go-dark.png">
+      <img alt="Lyrelog for Go" src="https://lyrelog.com/readme/go-light.png" width="600">
+    </picture>
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://docs.lyrelog.com/sdks/go"><b>Documentation</b></a> ·
+  <a href="https://docs.lyrelog.com/quickstart">Quickstart</a> ·
+  <a href="https://lyrelog.com">lyrelog.com</a>
+</p>
 
 Structured logs from your Go services to [Lyrelog](https://lyrelog.com), the hosted log
 service. Standard library only, Go 1.24+.
