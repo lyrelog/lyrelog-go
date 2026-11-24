@@ -13,7 +13,7 @@
   <a href="https://lyrelog.com">lyrelog.com</a>
 </p>
 
-Structured logs from your Go services to [Lyrelog](https://lyrelog.com), the hosted log
+Structured logs from your Go services to [Lyrelog](https://lyrelog.com/platforms/go), the hosted log
 service. Standard library only, Go 1.24+.
 
 ## Install
